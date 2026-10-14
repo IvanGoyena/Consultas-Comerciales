@@ -9,7 +9,7 @@ def construir_tabla_detalle(
 
     df_detalle,
     df_articulos,
-    df_volumetria=None,  # Compatibilidad temporal; ya no se utiliza.
+    df_volumetria=None,  # Fallback de volumetría para Cloud/versionados.
 
 ):
 
@@ -101,6 +101,110 @@ def construir_tabla_detalle(
     # ------------------------------------------------------
 
     articulos = df_articulos.copy()
+
+    # ------------------------------------------------------
+    # COMPLETAR VOLUMETRÍA DESDE MAESTRO VOLUMETRÍA
+    # ------------------------------------------------------
+    # En el host SQL, analytics.vw_maestro_articulos ya puede traer
+    # AltoMM/AnchoMM/ProfundoMM/PesoKg/VolumenM3.
+    # En Streamlit Cloud, el Maestro Articulo versionado no necesariamente
+    # contiene esas columnas y la volumetría viene en un maestro separado.
+    #
+    # construir_tabla_detalle ya recibía df_volumetria, pero hasta ahora
+    # no lo utilizaba. Lo aprovechamos como fallback sin cambiar el contrato.
+
+    articulos.columns = (
+        articulos.columns
+        .astype(str)
+        .str.strip()
+    )
+
+    if "COD_ART" in articulos.columns:
+        articulos["COD_ART"] = (
+            articulos["COD_ART"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .str.replace(r"\.0$", "", regex=True)
+        )
+
+    columnas_volumetria = [
+        "AltoMM",
+        "AnchoMM",
+        "ProfundoMM",
+        "PesoKg",
+        "VolumenM3",
+    ]
+
+    faltantes_volumetria = [
+        columna
+        for columna in columnas_volumetria
+        if columna not in articulos.columns
+    ]
+
+    if (
+        faltantes_volumetria
+        and df_volumetria is not None
+        and not df_volumetria.empty
+        and "COD_ART" in articulos.columns
+    ):
+        from models.volumetria import construir_tabla_volumetria
+
+        volumetria = construir_tabla_volumetria(
+            df_volumetria.copy()
+        )
+
+        columnas_merge = [
+            "CodigoArticulo",
+            *[
+                columna
+                for columna in columnas_volumetria
+                if columna in volumetria.columns
+            ],
+        ]
+
+        volumetria = (
+            volumetria[columnas_merge]
+            .copy()
+            .rename(columns={"CodigoArticulo": "COD_ART"})
+            .drop_duplicates(subset=["COD_ART"], keep="first")
+        )
+
+        articulos = articulos.merge(
+            volumetria,
+            on="COD_ART",
+            how="left",
+            suffixes=("", "_VOL"),
+            validate="many_to_one",
+        )
+
+        # Si alguna columna ya existía en Artículos pero venía vacía,
+        # completar con el valor del Maestro Volumetría.
+        for columna in columnas_volumetria:
+            columna_vol = f"{columna}_VOL"
+
+            if columna_vol in articulos.columns:
+                if columna not in articulos.columns:
+                    articulos[columna] = articulos[columna_vol]
+                else:
+                    base = pd.to_numeric(
+                        articulos[columna],
+                        errors="coerce",
+                    )
+                    respaldo = pd.to_numeric(
+                        articulos[columna_vol],
+                        errors="coerce",
+                    )
+                    articulos[columna] = base.where(
+                        base.notna(),
+                        respaldo,
+                    )
+
+                articulos = articulos.drop(
+                    columns=[columna_vol],
+                    errors="ignore",
+                )
 
     # ------------------------------------------------------
     # COLUMNAS REQUERIDAS
