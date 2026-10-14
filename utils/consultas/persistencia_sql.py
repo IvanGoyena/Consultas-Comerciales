@@ -7,8 +7,6 @@ from typing import Any, Iterator
 import pandas as pd
 from sqlalchemy import text as sql_text
 
-from database import engine
-
 
 # Contrato Python actual -> tablas PostgreSQL commercial.*.
 # Mantiene los nombres que ya consume la interfaz para no reescribir el módulo.
