@@ -1,15 +1,9 @@
 import pandas as pd
 
 
-# ==========================================================
-# NORMALIZACIÓN DE CÓDIGOS
-# ==========================================================
-
 def normalizar_codigo(serie):
-
     return (
-        serie
-        .fillna("")
+        serie.fillna("")
         .astype(str)
         .str.strip()
         .str.upper()
@@ -17,129 +11,69 @@ def normalizar_codigo(serie):
     )
 
 
-# ==========================================================
-# MAESTRO DE EXPRESOS
-# ==========================================================
-
 def construir_tabla_expresos(df_expresos):
-
-    # ------------------------------------------------------
-    # COPIA
-    # ------------------------------------------------------
-
+    """
+    Acepta:
+    - raw/Data Expresos: cod_expre, nombre, direccion, localidad,
+      agrupador, zona_agrupador
+    - analytics: codigo_expreso, nombre, direccion, localidad,
+      agrupador, zona_agrupador
+    - contrato interno ya normalizado.
+    """
     tabla = df_expresos.copy()
 
-    # ------------------------------------------------------
-    # VALIDACIÓN DE COLUMNAS
-    # ------------------------------------------------------
-
-    columnas_requeridas = [
-        "codigo_expreso",
-        "nombre",
-        "direccion",
-        "localidad",
-        "agrupador",
-        "zona_agrupador",
+    columnas_finales = [
+        "CodigoExpreso", "Expreso", "DireccionExpreso",
+        "LocalidadExpreso", "AgrupadorExpreso", "ZonaAgrupadorExpreso",
     ]
 
-    columnas_faltantes = [
-        columna
-        for columna in columnas_requeridas
-        if columna not in tabla.columns
-    ]
+    if tabla is None or tabla.empty:
+        return pd.DataFrame(columns=columnas_finales)
 
-    if columnas_faltantes:
+    tabla.columns = tabla.columns.astype(str).str.strip()
 
-        raise ValueError(
-            "Faltan columnas en analytics.vw_maestro_expresos: "
-            f"{columnas_faltantes}"
-        )
-
-    # ------------------------------------------------------
-    # RENOMBRAR COLUMNAS
-    # ------------------------------------------------------
-
-    tabla = tabla.rename(
-        columns={
+    if set(columnas_finales).issubset(tabla.columns):
+        pass
+    elif {
+        "codigo_expreso", "nombre", "direccion", "localidad",
+        "agrupador", "zona_agrupador",
+    }.issubset(tabla.columns):
+        tabla = tabla.rename(columns={
             "codigo_expreso": "CodigoExpreso",
             "nombre": "Expreso",
             "direccion": "DireccionExpreso",
             "localidad": "LocalidadExpreso",
             "agrupador": "AgrupadorExpreso",
             "zona_agrupador": "ZonaAgrupadorExpreso",
-        }
-    )
-
-    # ------------------------------------------------------
-    # NORMALIZAR CLAVE
-    # ------------------------------------------------------
-
-    tabla["CodigoExpreso"] = normalizar_codigo(
-        tabla["CodigoExpreso"]
-    )
-
-    # ------------------------------------------------------
-    # LIMPIEZA DE TEXTOS
-    # ------------------------------------------------------
-
-    columnas_texto = [
-        "Expreso",
-        "DireccionExpreso",
-        "LocalidadExpreso",
-        "AgrupadorExpreso",
-        "ZonaAgrupadorExpreso",
-    ]
-
-    for columna in columnas_texto:
-
-        tabla[columna] = (
-            tabla[columna]
-            .fillna("")
-            .astype(str)
-            .str.strip()
+        })
+    elif {
+        "cod_expre", "nombre", "direccion", "localidad",
+        "agrupador", "zona_agrupador",
+    }.issubset(tabla.columns):
+        tabla = tabla.rename(columns={
+            "cod_expre": "CodigoExpreso",
+            "nombre": "Expreso",
+            "direccion": "DireccionExpreso",
+            "localidad": "LocalidadExpreso",
+            "agrupador": "AgrupadorExpreso",
+            "zona_agrupador": "ZonaAgrupadorExpreso",
+        })
+    else:
+        raise ValueError(
+            "Datos Expresos no coincide con los contratos soportados. "
+            f"Columnas recibidas: {list(tabla.columns)}"
         )
 
-    # ------------------------------------------------------
-    # ELIMINAR REGISTROS SIN CÓDIGO
-    # ------------------------------------------------------
+    tabla["CodigoExpreso"] = normalizar_codigo(tabla["CodigoExpreso"])
 
-    tabla = tabla[
-        tabla["CodigoExpreso"] != ""
-    ].copy()
+    for c in columnas_finales[1:]:
+        tabla[c] = tabla[c].fillna("").astype(str).str.strip()
 
-    # ------------------------------------------------------
-    # EVITAR DUPLICADOS
-    # Una fila por código de expreso
-    # ------------------------------------------------------
-
+    tabla = tabla.loc[tabla["CodigoExpreso"].ne("")].copy()
     tabla = (
-        tabla
-        .sort_values(
-            [
-                "CodigoExpreso",
-                "Expreso"
-            ]
-        )
-        .drop_duplicates(
-            subset=["CodigoExpreso"],
-            keep="first"
-        )
+        tabla.sort_values(["CodigoExpreso", "Expreso"])
+        .drop_duplicates("CodigoExpreso", keep="first")
         .reset_index(drop=True)
     )
 
-    # ------------------------------------------------------
-    # TABLA SATÉLITE FINAL
-    # ------------------------------------------------------
-
-    columnas_finales = [
-        "CodigoExpreso",
-        "Expreso",
-        "DireccionExpreso",
-        "LocalidadExpreso",
-        "AgrupadorExpreso",
-        "ZonaAgrupadorExpreso",
-    ]
-
-    tabla = tabla[columnas_finales].copy()
-
-    return tabla
+    return tabla[columnas_finales].copy()

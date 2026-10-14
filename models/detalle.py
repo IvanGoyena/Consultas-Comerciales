@@ -9,7 +9,7 @@ def construir_tabla_detalle(
 
     df_detalle,
     df_articulos,
-    df_volumetria=None,  # Fallback de volumetría para Cloud/versionados.
+    df_volumetria=None,  # Maestro separado usado en Cloud/versionados.
 
 ):
 
@@ -103,152 +103,86 @@ def construir_tabla_detalle(
     articulos = df_articulos.copy()
 
     # ------------------------------------------------------
+    # COLUMNAS REQUERIDAS DEL MAESTRO ARTÍCULOS
+    # ------------------------------------------------------
+    # Las dimensiones NO son obligatorias acá: en Cloud viven en
+    # Maestro Volumetria y se completan más abajo.
+    columnas_requeridas = [
+        "COD_ART",
+        "DESCRIP",
+    ]
+
+    faltantes = [
+        c
+        for c in columnas_requeridas
+        if c not in articulos.columns
+    ]
+
+    if faltantes:
+        raise ValueError(
+            f"Faltan columnas base en Maestro Articulos: {faltantes}"
+        )
+
+    # Metadatos opcionales: mantener contrato aunque el maestro cambie.
+    for columna in [
+        "Rubro", "Marca", "Terminacion", "Tipo", "Origen", "Gama",
+        "Familia", "Familia_2", "Sector", "Sectorizacion",
+    ]:
+        if columna not in articulos.columns:
+            articulos[columna] = ""
+
+    # ------------------------------------------------------
     # COMPLETAR VOLUMETRÍA DESDE MAESTRO VOLUMETRÍA
     # ------------------------------------------------------
-    # En el host SQL, analytics.vw_maestro_articulos ya puede traer
-    # AltoMM/AnchoMM/ProfundoMM/PesoKg/VolumenM3.
-    # En Streamlit Cloud, el Maestro Articulo versionado no necesariamente
-    # contiene esas columnas y la volumetría viene en un maestro separado.
-    #
-    # construir_tabla_detalle ya recibía df_volumetria, pero hasta ahora
-    # no lo utilizaba. Lo aprovechamos como fallback sin cambiar el contrato.
+    articulos.columns = articulos.columns.astype(str).str.strip()
 
-    articulos.columns = (
-        articulos.columns
+    articulos["COD_ART"] = (
+        articulos["COD_ART"]
+        .fillna("")
         .astype(str)
         .str.strip()
+        .str.upper()
+        .str.replace(r"\.0$", "", regex=True)
     )
 
-    if "COD_ART" in articulos.columns:
-        articulos["COD_ART"] = (
-            articulos["COD_ART"]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .str.upper()
-            .str.replace(r"\.0$", "", regex=True)
-        )
-
-    columnas_volumetria = [
-        "AltoMM",
-        "AnchoMM",
-        "ProfundoMM",
-        "PesoKg",
-        "VolumenM3",
+    columnas_vol = [
+        "AltoMM", "AnchoMM", "ProfundoMM", "PesoKg", "VolumenM3",
     ]
 
-    faltantes_volumetria = [
-        columna
-        for columna in columnas_volumetria
-        if columna not in articulos.columns
-    ]
-
-    if (
-        faltantes_volumetria
-        and df_volumetria is not None
-        and not df_volumetria.empty
-        and "COD_ART" in articulos.columns
-    ):
+    if df_volumetria is not None and not df_volumetria.empty:
         from models.volumetria import construir_tabla_volumetria
 
-        volumetria = construir_tabla_volumetria(
-            df_volumetria.copy()
-        )
-
-        columnas_merge = [
-            "CodigoArticulo",
-            *[
-                columna
-                for columna in columnas_volumetria
-                if columna in volumetria.columns
-            ],
-        ]
-
-        volumetria = (
-            volumetria[columnas_merge]
-            .copy()
-            .rename(columns={"CodigoArticulo": "COD_ART"})
-            .drop_duplicates(subset=["COD_ART"], keep="first")
-        )
+        vol = construir_tabla_volumetria(df_volumetria.copy())
+        vol = vol[
+            ["CodigoArticulo", *columnas_vol]
+        ].rename(columns={"CodigoArticulo": "COD_ART"})
+        vol = vol.drop_duplicates("COD_ART", keep="first")
 
         articulos = articulos.merge(
-            volumetria,
+            vol,
             on="COD_ART",
             how="left",
             suffixes=("", "_VOL"),
             validate="many_to_one",
         )
 
-        # Si alguna columna ya existía en Artículos pero venía vacía,
-        # completar con el valor del Maestro Volumetría.
-        for columna in columnas_volumetria:
-            columna_vol = f"{columna}_VOL"
-
-            if columna_vol in articulos.columns:
+        for columna in columnas_vol:
+            respaldo = f"{columna}_VOL"
+            if respaldo in articulos.columns:
                 if columna not in articulos.columns:
-                    articulos[columna] = articulos[columna_vol]
+                    articulos[columna] = articulos[respaldo]
                 else:
-                    base = pd.to_numeric(
-                        articulos[columna],
-                        errors="coerce",
+                    base_num = pd.to_numeric(articulos[columna], errors="coerce")
+                    vol_num = pd.to_numeric(articulos[respaldo], errors="coerce")
+                    articulos[columna] = base_num.where(
+                        base_num.notna() & (base_num > 0),
+                        vol_num,
                     )
-                    respaldo = pd.to_numeric(
-                        articulos[columna_vol],
-                        errors="coerce",
-                    )
-                    articulos[columna] = base.where(
-                        base.notna(),
-                        respaldo,
-                    )
+                articulos = articulos.drop(columns=[respaldo])
 
-                articulos = articulos.drop(
-                    columns=[columna_vol],
-                    errors="ignore",
-                )
-
-    # ------------------------------------------------------
-    # COLUMNAS REQUERIDAS
-    # ------------------------------------------------------
-
-    columnas_requeridas = [
-
-        "COD_ART",
-        "DESCRIP",
-        "Rubro",
-        "Marca",
-        "Terminacion",
-        "Tipo",
-        "Origen",
-        "Gama",
-        "Familia",
-        "Familia_2",
-        "Sector",
-        "Sectorizacion",
-        "AltoMM",
-        "AnchoMM",
-        "ProfundoMM",
-        "PesoKg",
-        "VolumenM3",
-
-    ]
-
-    faltantes = [
-
-        c
-
-        for c in columnas_requeridas
-
-        if c not in articulos.columns
-
-    ]
-
-    if len(faltantes) > 0:
-
-        raise ValueError(
-
-            f"Faltan columnas en Maestro Articulos: {faltantes}"
-
-        )
+    for columna in columnas_vol:
+        if columna not in articulos.columns:
+            articulos[columna] = 0
 
     # ------------------------------------------------------
     # TIPOS DE DATOS

@@ -1,15 +1,9 @@
 import pandas as pd
 
 
-# ==========================================================
-# NORMALIZACIÓN DE CÓDIGOS
-# ==========================================================
-
 def normalizar_codigo(serie):
-
     return (
-        serie
-        .fillna("")
+        serie.fillna("")
         .astype(str)
         .str.strip()
         .str.upper()
@@ -17,235 +11,111 @@ def normalizar_codigo(serie):
     )
 
 
-# ==========================================================
-# MAESTRO DE VOLUMETRÍA
-# ==========================================================
-
 def construir_tabla_volumetria(df_volumetria):
-
-    # ------------------------------------------------------
-    # COPIA
-    # ------------------------------------------------------
+    """
+    Acepta Maestro Volumetria versionado y contratos SQL/internos.
+    """
+    columnas_finales = [
+        "CodigoArticulo", "ArticuloDescripcion", "Familia",
+        "AltoMM", "AnchoMM", "ProfundoMM", "PesoKg",
+        "UnidadVenta", "VolumenM3", "VolumenUnidadVentaM3",
+    ]
 
     tabla = df_volumetria.copy()
 
-    # ------------------------------------------------------
-    # NORMALIZAR ENCABEZADOS
-    # ------------------------------------------------------
+    if tabla is None or tabla.empty:
+        return pd.DataFrame(columns=columnas_finales)
 
-    tabla.columns = (
-        tabla.columns
-        .astype(str)
-        .str.strip()
-    )
+    tabla.columns = tabla.columns.astype(str).str.strip()
 
-    # ------------------------------------------------------
-    # VALIDACIÓN DE COLUMNAS
-    # ------------------------------------------------------
-
-    columnas_requeridas = [
-        "Codigo",
-        "Descripcion",
-        "Alto",
-        "Ancho",
-        "Profundo",
-        "UnidadVenta",
-        "Kg",
-        "Familia",
-    ]
-
-    columnas_faltantes = [
-        columna
-        for columna in columnas_requeridas
-        if columna not in tabla.columns
-    ]
-
-    if columnas_faltantes:
-
-        raise ValueError(
-            "Faltan columnas en Maestro Volumetría: "
-            f"{columnas_faltantes}"
-        )
-
-    # ------------------------------------------------------
-    # RENOMBRAR COLUMNAS
-    # ------------------------------------------------------
-
-    tabla = tabla.rename(
-        columns={
+    # Archivo versionado actual
+    if {
+        "Codigo", "Descripcion", "Alto", "Ancho",
+        "Profundo", "UnidadVenta", "Kg", "Familia",
+    }.issubset(tabla.columns):
+        tabla = tabla.rename(columns={
             "Codigo": "CodigoArticulo",
             "Descripcion": "ArticuloDescripcion",
             "Alto": "AltoMM",
             "Ancho": "AnchoMM",
             "Profundo": "ProfundoMM",
             "Kg": "PesoKg",
-        }
-    )
+        })
 
-    # ------------------------------------------------------
-    # NORMALIZAR CÓDIGO
-    # ------------------------------------------------------
+    # SQL / core / analytics
+    elif {
+        "codigo_articulo", "descripcion", "alto_mm", "ancho_mm",
+        "profundo_mm", "peso_kg",
+    }.issubset(tabla.columns):
+        tabla = tabla.rename(columns={
+            "codigo_articulo": "CodigoArticulo",
+            "descripcion": "ArticuloDescripcion",
+            "alto_mm": "AltoMM",
+            "ancho_mm": "AnchoMM",
+            "profundo_mm": "ProfundoMM",
+            "peso_kg": "PesoKg",
+            "unidad_venta": "UnidadVenta",
+            "familia": "Familia",
+            "volumen_m3": "VolumenM3",
+        })
 
-    tabla["CodigoArticulo"] = normalizar_codigo(
-        tabla["CodigoArticulo"]
-    )
+    # Contrato interno
+    elif {
+        "CodigoArticulo", "AltoMM", "AnchoMM",
+        "ProfundoMM", "PesoKg",
+    }.issubset(tabla.columns):
+        pass
 
-    # ------------------------------------------------------
-    # LIMPIEZA DE TEXTOS
-    # ------------------------------------------------------
-
-    columnas_texto = [
-        "ArticuloDescripcion",
-        "Familia",
-    ]
-
-    for columna in columnas_texto:
-
-        tabla[columna] = (
-            tabla[columna]
-            .fillna("")
-            .astype(str)
-            .str.strip()
+    else:
+        raise ValueError(
+            "Maestro Volumetria no coincide con los contratos soportados. "
+            f"Columnas recibidas: {list(tabla.columns)}"
         )
 
-    # ------------------------------------------------------
-    # CONVERSIÓN DE MEDIDAS
-    # ------------------------------------------------------
+    if "ArticuloDescripcion" not in tabla.columns:
+        tabla["ArticuloDescripcion"] = ""
+    if "Familia" not in tabla.columns:
+        tabla["Familia"] = ""
+    if "UnidadVenta" not in tabla.columns:
+        tabla["UnidadVenta"] = 1
 
-    columnas_medidas = [
-        "AltoMM",
-        "AnchoMM",
-        "ProfundoMM",
-    ]
-
-    for columna in columnas_medidas:
-
-        tabla[columna] = (
-            pd.to_numeric(
-                tabla[columna],
-                errors="coerce"
-            )
-            .fillna(0)
-        )
-
-    # ------------------------------------------------------
-    # PESO
-    # ------------------------------------------------------
-
-    tabla["PesoKg"] = (
-        pd.to_numeric(
-            tabla["PesoKg"],
-            errors="coerce"
-        )
-        .fillna(0)
+    tabla["CodigoArticulo"] = normalizar_codigo(tabla["CodigoArticulo"])
+    tabla["ArticuloDescripcion"] = (
+        tabla["ArticuloDescripcion"].fillna("").astype(str).str.strip()
     )
+    tabla["Familia"] = tabla["Familia"].fillna("").astype(str).str.strip()
 
-    # ------------------------------------------------------
-    # UNIDAD DE VENTA
-    # ------------------------------------------------------
+    for c in ["AltoMM", "AnchoMM", "ProfundoMM", "PesoKg"]:
+        tabla[c] = pd.to_numeric(tabla[c], errors="coerce").fillna(0)
 
     tabla["UnidadVenta"] = (
-        pd.to_numeric(
-            tabla["UnidadVenta"],
-            errors="coerce"
-        )
+        pd.to_numeric(tabla["UnidadVenta"], errors="coerce")
         .fillna(1)
     )
+    tabla.loc[tabla["UnidadVenta"] <= 0, "UnidadVenta"] = 1
+    tabla["UnidadVenta"] = tabla["UnidadVenta"].astype(int)
 
-    # Evitar unidades de venta iguales a cero
-    tabla.loc[
-        tabla["UnidadVenta"] <= 0,
-        "UnidadVenta"
-    ] = 1
-
-    tabla["UnidadVenta"] = (
-        tabla["UnidadVenta"]
-        .astype(int)
-    )
-
-    # ------------------------------------------------------
-    # CÁLCULO DE VOLUMEN EN M³
-    # ------------------------------------------------------
-
-    tabla["VolumenM3"] = (
-        tabla["AltoMM"]
-        * tabla["AnchoMM"]
-        * tabla["ProfundoMM"]
+    calculado = (
+        tabla["AltoMM"] * tabla["AnchoMM"] * tabla["ProfundoMM"]
     ) / 1_000_000_000
 
-    # ------------------------------------------------------
-    # VOLUMEN POR UNIDAD DE VENTA
-    # ------------------------------------------------------
+    if "VolumenM3" in tabla.columns:
+        existente = pd.to_numeric(tabla["VolumenM3"], errors="coerce")
+        tabla["VolumenM3"] = existente.where(existente.notna() & (existente > 0), calculado)
+    else:
+        tabla["VolumenM3"] = calculado
 
-    tabla["VolumenUnidadVentaM3"] = (
-        tabla["VolumenM3"]
-        * tabla["UnidadVenta"]
-    )
+    tabla["VolumenUnidadVentaM3"] = tabla["VolumenM3"] * tabla["UnidadVenta"]
 
-    # ------------------------------------------------------
-    # REDONDEO
-    # ------------------------------------------------------
+    tabla["VolumenM3"] = tabla["VolumenM3"].round(6)
+    tabla["VolumenUnidadVentaM3"] = tabla["VolumenUnidadVentaM3"].round(6)
+    tabla["PesoKg"] = tabla["PesoKg"].round(3)
 
-    tabla["VolumenM3"] = (
-        tabla["VolumenM3"]
-        .round(6)
-    )
-
-    tabla["VolumenUnidadVentaM3"] = (
-        tabla["VolumenUnidadVentaM3"]
-        .round(6)
-    )
-
-    tabla["PesoKg"] = (
-        tabla["PesoKg"]
-        .round(3)
-    )
-
-    # ------------------------------------------------------
-    # ELIMINAR REGISTROS SIN CÓDIGO
-    # ------------------------------------------------------
-
-    tabla = tabla[
-        tabla["CodigoArticulo"] != ""
-    ].copy()
-
-    # ------------------------------------------------------
-    # EVITAR DUPLICADOS
-    # Una fila por artículo
-    # ------------------------------------------------------
-
+    tabla = tabla.loc[tabla["CodigoArticulo"].ne("")].copy()
     tabla = (
-        tabla
-        .sort_values(
-            [
-                "CodigoArticulo",
-                "ArticuloDescripcion"
-            ]
-        )
-        .drop_duplicates(
-            subset=["CodigoArticulo"],
-            keep="first"
-        )
+        tabla.sort_values(["CodigoArticulo", "ArticuloDescripcion"])
+        .drop_duplicates("CodigoArticulo", keep="first")
         .reset_index(drop=True)
     )
 
-    # ------------------------------------------------------
-    # SELECCIÓN FINAL DE COLUMNAS
-    # ------------------------------------------------------
-
-    columnas_finales = [
-        "CodigoArticulo",
-        "ArticuloDescripcion",
-        "Familia",
-        "AltoMM",
-        "AnchoMM",
-        "ProfundoMM",
-        "PesoKg",
-        "UnidadVenta",
-        "VolumenM3",
-        "VolumenUnidadVentaM3",
-    ]
-
-    tabla = tabla[columnas_finales].copy()
-
-    return tabla
+    return tabla[columnas_finales].copy()
