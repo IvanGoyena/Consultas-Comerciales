@@ -7,7 +7,6 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text as sql_text
 
-from database import engine
 
 from utils.google_sheets import (
     COLUMNAS_ANULACIONES,
