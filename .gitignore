@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+.venv/
+venv/
+
+# VS Code
+.vscode/
+
+
+# Secrets
+config/google_drive.json
+
+# Logs
+*.log
+
+# Archivos temporales
+*.tmp
+*.bak
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Mac
+.DS_Store
+
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Credenciales
+.streamlit/secrets.toml
+
+# Requirements
+requirements.txt
