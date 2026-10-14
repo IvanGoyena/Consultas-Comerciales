@@ -211,6 +211,8 @@ def _coerce(sql_col: str, valor: Any) -> Any:
 
 @contextmanager
 def transaccion() -> Iterator[Any]:
+    from database import engine
+
     with engine.begin() as conexion:
         yield conexion
 
