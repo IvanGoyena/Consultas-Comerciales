@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+def _obtener_engine():
+    from database import engine
+    return engine
+
+
 import json
 import os
 import socket
@@ -11,7 +16,6 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text
 
-from database import engine
 
 
 TABLA_COLA = "execution.orden_agrupacion"
@@ -274,7 +278,7 @@ def leer_cola() -> pd.DataFrame:
         """
     )
 
-    with engine.connect() as conexion:
+    with _obtener_engine().connect() as conexion:
         filas = conexion.execute(consulta).mappings().all()
 
     if not filas:
@@ -366,7 +370,7 @@ def agregar_fila(registro: dict[str, Any]) -> None:
         ensure_ascii=False,
     )
 
-    with engine.begin() as conexion:
+    with _obtener_engine().begin() as conexion:
         conexion.execute(consulta, parametros)
 
 
@@ -386,7 +390,7 @@ def buscar_fila_orden(orden_id: str) -> int | None:
         """
     )
 
-    with engine.connect() as conexion:
+    with _obtener_engine().connect() as conexion:
         existe = conexion.execute(
             consulta,
             {"orden_id": str(orden_id).strip()},
@@ -449,7 +453,7 @@ def actualizar_orden(
         """
     )
 
-    with engine.begin() as conexion:
+    with _obtener_engine().begin() as conexion:
         resultado = conexion.execute(consulta, parametros)
 
         if resultado.rowcount == 0:
@@ -545,7 +549,7 @@ def crear_orden_agrupacion(
         "cantidad_pedidos": len(pedidos_normalizados),
     }
 
-    with engine.begin() as conexion:
+    with _obtener_engine().begin() as conexion:
         conexion.execute(consulta, parametros)
 
     return orden_id
@@ -560,7 +564,7 @@ def obtener_orden(orden_id: str) -> dict[str, Any] | None:
         """
     )
 
-    with engine.connect() as conexion:
+    with _obtener_engine().connect() as conexion:
         fila = conexion.execute(
             consulta,
             {"orden_id": str(orden_id).strip()},
@@ -582,7 +586,7 @@ def obtener_siguiente_pendiente() -> dict[str, Any] | None:
         """
     )
 
-    with engine.connect() as conexion:
+    with _obtener_engine().connect() as conexion:
         fila = conexion.execute(consulta).mappings().first()
 
     if fila is None:
@@ -611,7 +615,7 @@ def marcar_en_proceso(
         """
     )
 
-    with engine.begin() as conexion:
+    with _obtener_engine().begin() as conexion:
         resultado = conexion.execute(
             consulta,
             {

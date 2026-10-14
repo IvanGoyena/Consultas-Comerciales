@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import text as sql_text
-
+from config import ES_STREAMLIT_CLOUD
 
 from utils.google_sheets import (
     COLUMNAS_ANULACIONES,
@@ -208,6 +207,9 @@ def leer_tabla_sql(
     de columnas que espera hoy el módulo de Consultas.
     """
     try:
+        from sqlalchemy import text as sql_text
+        from database import engine
+
         with engine.connect() as conexion:
             tabla = pd.read_sql_query(
                 sql_text(consulta),
@@ -248,7 +250,13 @@ def _leer_sql_con_fallback_google(
     se propaga y la pantalla lo muestra: nunca se mezclan silenciosamente
     datos de PostgreSQL y Google Sheets.
     """
-    _ = nombre_hoja
+    if ES_STREAMLIT_CLOUD:
+        return leer_tabla_google(
+            nombre_hoja=nombre_hoja,
+            columnas=columnas,
+            columna_fecha=columna_fecha,
+        )
+
     return leer_tabla_sql(
         consulta=consulta,
         columnas=columnas,

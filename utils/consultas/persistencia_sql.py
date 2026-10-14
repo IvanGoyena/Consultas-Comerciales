@@ -8,6 +8,7 @@ import pandas as pd
 from sqlalchemy import text as sql_text
 
 
+
 # Contrato Python actual -> tablas PostgreSQL commercial.*.
 # Mantiene los nombres que ya consume la interfaz para no reescribir el módulo.
 ENTIDADES: dict[str, dict[str, Any]] = {
@@ -165,6 +166,11 @@ _TIMESTAMP_FIELDS = {
 _BOOLEAN_FIELDS = {"bloqueo_activo"}
 
 
+def _obtener_engine():
+    from database import engine
+    return engine
+
+
 def _config(nombre_hoja: str) -> dict[str, Any]:
     try:
         return ENTIDADES[nombre_hoja]
@@ -211,9 +217,7 @@ def _coerce(sql_col: str, valor: Any) -> Any:
 
 @contextmanager
 def transaccion() -> Iterator[Any]:
-    from database import engine
-
-    with engine.begin() as conexion:
+    with _obtener_engine().begin() as conexion:
         yield conexion
 
 

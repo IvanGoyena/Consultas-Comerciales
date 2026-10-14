@@ -13,10 +13,18 @@ COLUMNAS_CANCELACIONES_ENTREGA = [
     "ResponsableIR", "ObservacionIR", "ResponsableReingreso",
     "ObservacionReingreso", "ResultadoFinal", "UltimaActualizacion",
 ]
-from utils.consultas.persistencia_sql import (
-    asegurar_hoja,
-    leer_hoja,
-)
+from config import ES_STREAMLIT_CLOUD
+
+if ES_STREAMLIT_CLOUD:
+    from utils.consultas.persistencia_google import (
+        asegurar_hoja,
+        leer_hoja,
+    )
+else:
+    from utils.consultas.persistencia_sql import (
+        asegurar_hoja,
+        leer_hoja,
+    )
 
 
 @st.cache_data(ttl=600, show_spinner=False)

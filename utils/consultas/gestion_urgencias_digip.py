@@ -8,9 +8,16 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from utils.consultas.persistencia_sql import (
-    actualizar_registro,
-)
+from config import ES_STREAMLIT_CLOUD
+
+if ES_STREAMLIT_CLOUD:
+    from utils.consultas.persistencia_google import (
+        actualizar_registro,
+    )
+else:
+    from utils.consultas.persistencia_sql import (
+        actualizar_registro,
+    )
 
 from utils.consultas.leer_gestion_consultas import (
     leer_urgencias,

@@ -9,13 +9,24 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from utils.consultas.persistencia_sql import (
-    agregar_registro,
-    actualizar_registro,
-    eliminar_registro,
-    leer_hoja,
-    asegurar_hoja,
-)
+from config import ES_STREAMLIT_CLOUD
+
+if ES_STREAMLIT_CLOUD:
+    from utils.consultas.persistencia_google import (
+        agregar_registro,
+        actualizar_registro,
+        eliminar_registro,
+        leer_hoja,
+        asegurar_hoja,
+    )
+else:
+    from utils.consultas.persistencia_sql import (
+        agregar_registro,
+        actualizar_registro,
+        eliminar_registro,
+        leer_hoja,
+        asegurar_hoja,
+    )
 
 
 # ==========================================================

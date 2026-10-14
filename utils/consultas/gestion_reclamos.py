@@ -1,4 +1,4 @@
-﻿# utils/gestion_reclamos.py
+# utils/gestion_reclamos.py
 
 from __future__ import annotations
 
@@ -22,13 +22,24 @@ from googleapiclient.http import MediaIoBaseUpload
 from utils.google_sheets import (
     crear_servicio_drive_escritura,
 )
-from utils.consultas.persistencia_sql import (
-    agregar_registro,
-    actualizar_registro,
-    insertar_registro,
-    leer_hoja,
-    transaccion,
-)
+from config import ES_STREAMLIT_CLOUD
+
+if ES_STREAMLIT_CLOUD:
+    from utils.consultas.persistencia_google import (
+        agregar_registro,
+        actualizar_registro,
+        insertar_registro,
+        leer_hoja,
+        transaccion,
+    )
+else:
+    from utils.consultas.persistencia_sql import (
+        agregar_registro,
+        actualizar_registro,
+        insertar_registro,
+        leer_hoja,
+        transaccion,
+    )
 
 
 # ==========================================================

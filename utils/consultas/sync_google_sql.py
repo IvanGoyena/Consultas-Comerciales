@@ -10,7 +10,6 @@ from typing import Any, Callable
 import pandas as pd
 from sqlalchemy import text
 
-from database import engine
 
 from utils.consultas.leer_gestion_consultas import (
     leer_solicitudes,
@@ -22,6 +21,11 @@ from utils.consultas.leer_gestion_consultas import (
     leer_reclamos_fotos,
 )
 
+
+
+def _obtener_engine():
+    from database import engine
+    return engine
 
 # ==========================================================
 # NORMALIZACIÓN
@@ -522,11 +526,11 @@ def sincronizar_fuente(fuente: Fuente) -> dict[str, Any]:
         "mensaje": "",
     }
 
-    with engine.begin() as conn:
+    with _obtener_engine().begin() as conn:
         sync_run_id = _iniciar_run(conn, fuente)
 
     try:
-        with engine.begin() as conn:
+        with _obtener_engine().begin() as conn:
             existentes = _leer_existentes(conn, fuente)
 
             for _, fila in tabla_google.iterrows():
@@ -618,7 +622,7 @@ def sincronizar_fuente(fuente: Fuente) -> dict[str, Any]:
         resumen["errores"] += 1
         resumen["mensaje"] = f"{type(error).__name__}: {error}"
 
-        with engine.begin() as conn:
+        with _obtener_engine().begin() as conn:
             _cerrar_run(
                 conn,
                 sync_run_id,
@@ -684,7 +688,7 @@ def validar_paridad() -> pd.DataFrame:
                     if _limpiar(x)
                 }
 
-            with engine.begin() as conn:
+            with _obtener_engine().begin() as conn:
                 sql_ids = {
                     _limpiar(x)
                     for x in conn.execute(
