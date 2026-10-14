@@ -10,31 +10,16 @@ venv/
 # VS Code
 .vscode/
 
-
 # Secrets
+.streamlit/secrets.toml
 config/google_drive.json
 
-# Logs
+# Logs y temporales
 *.log
-
-# Archivos temporales
 *.tmp
 *.bak
 
-# Windows
+# Sistema operativo
 Thumbs.db
 Desktop.ini
-
-# Mac
 .DS_Store
-
-
-# Python
-__pycache__/
-*.py[cod]
-
-# Credenciales
-.streamlit/secrets.toml
-
-# Requirements
-requirements.txt
