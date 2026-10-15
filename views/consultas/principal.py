@@ -509,12 +509,6 @@ def render() -> None:
     if "consultas_pedido_detalle" not in st.session_state:
         st.session_state["consultas_pedido_detalle"] = ""
 
-    if "consultas_pedidos_gestion_multiple" not in st.session_state:
-        st.session_state["consultas_pedidos_gestion_multiple"] = []
-
-    if "consultas_abrir_gestion_multiple" not in st.session_state:
-        st.session_state["consultas_abrir_gestion_multiple"] = False
-
     if "mostrar_historico_reclamos" not in st.session_state:
         st.session_state["mostrar_historico_reclamos"] = False
 
@@ -852,14 +846,37 @@ def render() -> None:
                 .reset_index(drop=True)
             )
 
+            solicitudes_para_mapa = solicitudes_abiertas.copy()
+            solicitudes_para_mapa["_PedidoIndividual"] = (
+                solicitudes_para_mapa["Pedido"]
+                .fillna("")
+                .astype(str)
+                .str.split(r"\s*\|\s*", regex=True)
+            )
+            solicitudes_para_mapa = solicitudes_para_mapa.explode(
+                "_PedidoIndividual"
+            )
+            solicitudes_para_mapa["_PedidoIndividual"] = (
+                solicitudes_para_mapa["_PedidoIndividual"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+            solicitudes_para_mapa = solicitudes_para_mapa.loc[
+                solicitudes_para_mapa["_PedidoIndividual"].ne("")
+            ].copy()
+
             pedidos_con_solicitud = set(
-                solicitudes_abiertas["Pedido"].tolist()
+                solicitudes_para_mapa["_PedidoIndividual"].tolist()
             )
 
             tipos_por_pedido = (
-                solicitudes_abiertas
-                .drop_duplicates(subset=["Pedido"], keep="first")
-                .set_index("Pedido")["TipoSolicitud"]
+                solicitudes_para_mapa
+                .drop_duplicates(
+                    subset=["_PedidoIndividual"],
+                    keep="first",
+                )
+                .set_index("_PedidoIndividual")["TipoSolicitud"]
                 .fillna("")
                 .astype(str)
                 .str.strip()
@@ -1187,22 +1204,10 @@ def render() -> None:
             [4, 1], vertical_alignment="center"
         )
 
-        indice_solicitud_superior = (
-            filas_solicitudes_superior[0]
-            if filas_solicitudes_superior
-            else None
-        )
-
-        seleccion_solicitud_valida = (
-            indice_solicitud_superior is not None
-            and 0 <= int(indice_solicitud_superior) < len(tabla_solicitudes_superior)
-            and 0 <= int(indice_solicitud_superior) < len(solicitudes_resumen)
-        )
-
         with accion_solicitud_1:
-            if seleccion_solicitud_valida:
+            if filas_solicitudes_superior:
                 seleccion_superior = tabla_solicitudes_superior.iloc[
-                    int(indice_solicitud_superior)
+                    filas_solicitudes_superior[0]
                 ]
                 st.caption(
                     f"Seleccionada: pedido **{seleccion_superior['Pedido']}** · "
@@ -1218,14 +1223,13 @@ def render() -> None:
                 "📩 Gestionar",
                 type="primary",
                 width="stretch",
-                disabled=not seleccion_solicitud_valida,
+                disabled=not bool(filas_solicitudes_superior),
                 key="btn_gestionar_solicitud_consultas",
             )
 
-        if gestionar_solicitud_superior and seleccion_solicitud_valida:
-            solicitud_superior = solicitudes_resumen.iloc[
-                int(indice_solicitud_superior)
-            ]
+        if gestionar_solicitud_superior and filas_solicitudes_superior:
+            indice_superior = filas_solicitudes_superior[0]
+            solicitud_superior = solicitudes_resumen.iloc[indice_superior]
             abrir_detalle_solicitud(solicitud_superior)
 
 
@@ -1474,21 +1478,10 @@ def render() -> None:
             )
 
             with reclamo_accion_1:
-                indice_reclamo_tabla = (
-                    filas_reclamos_consultas[0]
-                    if filas_reclamos_consultas
-                    else None
-                )
-
-                seleccion_reclamo_valida = (
-                    indice_reclamo_tabla is not None
-                    and 0 <= int(indice_reclamo_tabla) < len(tabla_reclamos_consultas)
-                )
-
-                if seleccion_reclamo_valida:
+                if filas_reclamos_consultas:
                     fila_reclamo_seleccionada = (
                         tabla_reclamos_consultas.iloc[
-                            int(indice_reclamo_tabla)
+                            filas_reclamos_consultas[0]
                         ]
                     )
 
@@ -1678,7 +1671,11 @@ def render() -> None:
 
     @st.dialog("📚 Gestión múltiple", width="large")
     def abrir_gestion_multiple(seleccionados: pd.DataFrame) -> None:
-        tabla_lote = seleccionados.copy().reset_index(drop=True)
+        tabla_lote = (
+            seleccionados.copy()
+            .drop_duplicates(subset=["Pedido"], keep="first")
+            .reset_index(drop=True)
+        )
         cantidad = len(tabla_lote)
         clientes_lote = sorted(
             tabla_lote["Cliente"]
@@ -1776,47 +1773,86 @@ def render() -> None:
                 return
 
             creadas, duplicadas, errores = [], [], []
-            for _, fila_lote in tabla_lote.iterrows():
-                pedido = str(fila_lote.get("Pedido", "")).strip()
-                cliente = str(fila_lote.get("Cliente", "")).strip()
-                if not pedido or not cliente:
-                    errores.append(
-                        f"{pedido or 'Sin pedido'}: faltan datos del pedido/cliente"
-                    )
-                    continue
+
+            fecha_habilitacion_txt = (
+                fecha_habilitacion.strftime("%Y-%m-%d")
+                if fecha_habilitacion is not None
+                else ""
+            )
+
+            # Si todos los pedidos pertenecen al mismo cliente,
+            # guardar UNA sola gestión con todos los pedidos.
+            if len(clientes_lote) == 1:
+                pedidos_unicos = list(dict.fromkeys(
+                    str(p).strip()
+                    for p in tabla_lote["Pedido"].tolist()
+                    if str(p).strip()
+                ))
+                pedido_grupo = " | ".join(pedidos_unicos)
+                cliente_grupo = clientes_lote[0]
+
                 try:
                     r = guardar_solicitud(
-                        pedido=pedido,
-                        cliente=cliente,
+                        pedido=pedido_grupo,
+                        cliente=cliente_grupo,
                         tipo_solicitud=tipo_solicitud,
                         descripcion=descripcion.strip(),
                         usuario_solicitante=usuario,
                         prioridad=prioridad,
-                        fecha_habilitacion=(
-                            fecha_habilitacion.strftime("%Y-%m-%d")
-                            if fecha_habilitacion is not None
-                            else ""
-                        ),
+                        fecha_habilitacion=fecha_habilitacion_txt,
                     )
-                    (duplicadas if r.get("duplicado") else creadas).append(pedido)
+                    destino = duplicadas if r.get("duplicado") else creadas
+                    destino.append(pedido_grupo)
                 except Exception as error:
-                    errores.append(f"{pedido}: {error}")
+                    errores.append(f"{pedido_grupo}: {error}")
+
+            else:
+                for _, fila_lote in tabla_lote.iterrows():
+                    pedido = str(fila_lote.get("Pedido", "")).strip()
+                    cliente = str(fila_lote.get("Cliente", "")).strip()
+
+                    if not pedido or not cliente:
+                        errores.append(
+                            f"{pedido or 'Sin pedido'}: faltan datos del pedido/cliente"
+                        )
+                        continue
+
+                    try:
+                        r = guardar_solicitud(
+                            pedido=pedido,
+                            cliente=cliente,
+                            tipo_solicitud=tipo_solicitud,
+                            descripcion=descripcion.strip(),
+                            usuario_solicitante=usuario,
+                            prioridad=prioridad,
+                            fecha_habilitacion=fecha_habilitacion_txt,
+                        )
+                        (duplicadas if r.get("duplicado") else creadas).append(pedido)
+                    except Exception as error:
+                        errores.append(f"{pedido}: {error}")
 
             invalidar_cache_gestion()
             if creadas:
-                st.success(
-                    f"Solicitudes creadas: {len(creadas)} · " + ", ".join(creadas)
-                )
+                if len(clientes_lote) == 1:
+                    st.success("Solicitud creada para: " + ", ".join(creadas))
+                else:
+                    st.success(
+                        f"Solicitudes creadas: {len(creadas)} · " + ", ".join(creadas)
+                    )
             if duplicadas:
-                st.warning(
-                    f"Ya tenían una solicitud equivalente: {len(duplicadas)} · "
-                    + ", ".join(duplicadas)
-                )
+                if len(clientes_lote) == 1:
+                    st.warning(
+                        "Ya existe una solicitud equivalente para: "
+                        + ", ".join(duplicadas)
+                    )
+                else:
+                    st.warning(
+                        f"Ya tenían una solicitud equivalente: {len(duplicadas)} · "
+                        + ", ".join(duplicadas)
+                    )
             if errores:
                 st.error("No se pudieron procesar:\n- " + "\n- ".join(errores))
             if not errores:
-                st.session_state["consultas_pedidos_gestion_multiple"] = []
-                st.session_state["consultas_abrir_gestion_multiple"] = False
                 st.toast("Gestión múltiple registrada.", icon="✅")
 
 
@@ -2020,7 +2056,7 @@ def render() -> None:
                         icon="📩",
                     )
                     invalidar_cache_gestion()
-                    st.rerun(scope="fragment")
+                    st.rerun()
 
                 except Exception:
                     st.error("No se pudo registrar la solicitud.")
@@ -2193,6 +2229,7 @@ def render() -> None:
 
         columnas_visibles = [
             "Pedido",
+            "NroEnvioERP",
             "FechaCreacion",
             "FechaTransmisionERP",
             "ClienteCodigo",
@@ -2212,12 +2249,14 @@ def render() -> None:
 
         tabla_visible_pedidos = (
             tabla_filtrada[columnas_visibles]
+            .drop_duplicates(subset=["Pedido"], keep="first")
             .reset_index(drop=True)
             .copy()
         )
 
         COLUMN_CONFIG = {
             "Pedido": st.column_config.TextColumn("Pedido", width="small"),
+            "NroEnvioERP": st.column_config.TextColumn("Nº Envio", width="small"),
             "FechaCreacion": st.column_config.DateColumn(
                 "Creación", format="DD/MM/YYYY", width="small"
             ),
@@ -2287,12 +2326,7 @@ def render() -> None:
                     key="btn_detalle_tabla_consultas",
                 )
             if abrir_detalle:
-                st.session_state["consultas_pedido_detalle"] = (
-                    str(fila_sel["Pedido"]).strip()
-                )
-                st.session_state["consultas_detalle_abierto"] = True
-                st.session_state["consultas_pedidos_gestion_multiple"] = []
-                st.session_state["consultas_abrir_gestion_multiple"] = False
+                abrir_detalle_pedido(str(fila_sel["Pedido"]).strip())
         else:
             clientes = seleccionados["Cliente"].fillna("").astype(str).str.strip().nunique()
             unidades = int(pd.to_numeric(seleccionados["Unidades"], errors="coerce").fillna(0).sum())
@@ -2309,80 +2343,6 @@ def render() -> None:
                     key="btn_gestion_multiple_consultas",
                 )
             if gestionar_lote:
-                st.session_state["consultas_pedidos_gestion_multiple"] = (
-                    seleccionados["Pedido"]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .loc[lambda s: s.ne("")]
-                    .tolist()
-                )
-                st.session_state["consultas_abrir_gestion_multiple"] = True
-                st.session_state["consultas_detalle_abierto"] = False
-                st.session_state["consultas_pedido_detalle"] = ""
-
-        # ======================================================
-        # GESTIÓN PERSISTENTE DENTRO DEL FRAGMENT
-        # ======================================================
-        # La selección de la tabla provoca un rerun del fragmento.
-        # Por eso el pedido/lote elegido se guarda en session_state.
-        # Los widgets de la gestión pueden rerunear sin cerrar el panel.
-
-        pedido_abierto = str(
-            st.session_state.get("consultas_pedido_detalle", "")
-            or ""
-        ).strip()
-
-        detalle_abierto = bool(
-            st.session_state.get("consultas_detalle_abierto", False)
-        )
-
-        pedidos_lote = [
-            str(p).strip()
-            for p in st.session_state.get(
-                "consultas_pedidos_gestion_multiple",
-                [],
-            )
-            if str(p).strip()
-        ]
-
-        if detalle_abierto and pedido_abierto:
-            st.markdown("---")
-
-            _, col_cerrar = st.columns([6, 1])
-            with col_cerrar:
-                cerrar_detalle = st.button(
-                    "✖ Cerrar gestión",
-                    width="stretch",
-                    key="btn_cerrar_gestion_pedido_consultas",
-                )
-
-            if cerrar_detalle:
-                st.session_state["consultas_detalle_abierto"] = False
-                st.session_state["consultas_pedido_detalle"] = ""
-                st.rerun(scope="fragment")
-
-            abrir_detalle_pedido(pedido_abierto)
-
-        elif (
-            st.session_state.get(
-                "consultas_abrir_gestion_multiple",
-                False,
-            )
-            and pedidos_lote
-        ):
-            lote_actual = tabla_visible_pedidos.loc[
-                tabla_visible_pedidos["Pedido"]
-                .fillna("")
-                .astype(str)
-                .isin(pedidos_lote)
-            ].copy()
-
-            # El disparador se consume ANTES de abrir el diálogo.
-            # Así, al cerrarlo con la X no vuelve a abrirse solo.
-            st.session_state["consultas_abrir_gestion_multiple"] = False
-
-            if not lote_actual.empty:
-                abrir_gestion_multiple(lote_actual)
+                abrir_gestion_multiple(seleccionados)
 
     render_tabla_comercial_fragment()
