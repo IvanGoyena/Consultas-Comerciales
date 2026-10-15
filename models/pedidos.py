@@ -440,29 +440,32 @@ def construir_tabla_pedidos(
     )
 
     # ==========================================================
-    # PEDIDOS ACTIVOS
+    # UNIVERSO DE PEDIDOS PARA CONSULTAS COMERCIALES
     # ==========================================================
-    # No depender de mayúsculas, tildes o espacios.
+    # Activos siempre + completos/finalizados para que la capa
+    # Comercial aplique después la ventana exacta de 15 días.
     estado_normalizado = (
         tabla["Estado"]
         .fillna("")
         .astype(str)
         .str.strip()
         .str.upper()
-        .str.replace(
-            "Ó",
-            "O",
-            regex=False,
-        )
+        .str.replace("Ó", "O", regex=False)
     )
 
+    estados_comerciales = {
+        "PENDIENTE",
+        "PREPARACION",
+        "EN PREPARACION",
+        "COMPLETO",
+        "COMPLETADO",
+        "FINALIZADO",
+        "FINAL",
+        "CERRADO",
+    }
+
     tabla = tabla.loc[
-        estado_normalizado.isin(
-            [
-                "PENDIENTE",
-                "PREPARACION",
-            ]
-        )
+        estado_normalizado.isin(estados_comerciales)
     ].copy()
 
     # ==========================================================
