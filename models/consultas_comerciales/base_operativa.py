@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import pandas as pd
 import streamlit as st
 
@@ -94,16 +95,90 @@ def _estado_tarea_controlada(valor: str) -> bool:
     )
 
 
+def _normalizar_estado(valor: object) -> str:
+    return (
+        str(valor or "")
+        .strip()
+        .upper()
+        .replace("Ó", "O")
+        .replace("Í", "I")
+    )
+
+
+def _tarea_es_preparacion(valor: object) -> bool:
+    texto = _normalizar_estado(valor)
+    return (not texto) or ("PREPARACION" in texto)
+
+
+def _resolver_fecha_fin_control(
+    pedidos: pd.DataFrame,
+    tareas: pd.DataFrame,
+) -> pd.Series:
+    resultado = pd.Series(pd.NaT, index=pedidos.index, dtype="datetime64[ns]")
+
+    if tareas is None or tareas.empty:
+        return resultado
+
+    col_prep = next(
+        (c for c in ("PreparacionId", "PreparacionID", "Preparación Id") if c in tareas.columns),
+        None,
+    )
+    col_estado = next(
+        (c for c in ("TareaEstado", "EstadoTarea", "Estado") if c in tareas.columns),
+        None,
+    )
+    col_fecha = next(
+        (c for c in ("FechaHoraEstado", "FechaEstado") if c in tareas.columns),
+        None,
+    )
+    col_tipo = next(
+        (c for c in ("TareaTipo", "TipoTarea") if c in tareas.columns),
+        None,
+    )
+
+    if col_prep is None or col_estado is None or col_fecha is None:
+        return resultado
+
+    t = tareas.copy()
+    t["_prep"] = _texto(t[col_prep]).str.replace(r"\.0$", "", regex=True)
+    t["_estado"] = _texto(t[col_estado])
+    t["_fecha"] = pd.to_datetime(t[col_fecha], errors="coerce", dayfirst=True)
+
+    if col_tipo is not None:
+        t = t.loc[t[col_tipo].map(_tarea_es_preparacion)].copy()
+
+    t = t.loc[t["_prep"].ne("")].copy()
+    if t.empty:
+        return resultado
+
+    cierres = {}
+
+    for prep, grupo in t.groupby("_prep"):
+        estados = grupo["_estado"].map(_normalizar_estado)
+        controladas = estados.map(_estado_tarea_controlada)
+
+        if not controladas.all():
+            continue
+
+        fechas = grupo.loc[controladas, "_fecha"].dropna()
+        if not fechas.empty:
+            cierres[str(prep)] = fechas.max()
+
+    for idx, fila in pedidos.iterrows():
+        prep = re.sub(r"\.0$", "", str(fila.get("PreparacionID", "") or "").strip())
+        if prep in cierres:
+            resultado.at[idx] = cierres[prep]
+
+    return resultado
+
+
 def _resolver_carros(
     pedidos: pd.DataFrame,
     tareas: pd.DataFrame,
 ) -> tuple[pd.Series, pd.Series]:
     """
-    Regla Comercial:
-    - pedido cerrado: no mostrar carros;
-    - preparación finalizada/controlada: no mostrar carros;
-    - preparación pendiente/en curso: mostrar sólo carros todavía no controlados;
-    - si la preparación mezcla controlados + pendientes: marcar 'Parcial'.
+    Sólo muestra CARROxxx pendiente/en curso.
+    Nunca muestra el contenedor numérico ya controlado.
     """
     carros = pd.Series("", index=pedidos.index, dtype="object")
     situacion = pd.Series("", index=pedidos.index, dtype="object")
@@ -115,12 +190,13 @@ def _resolver_carros(
         (c for c in ("PreparacionId", "PreparacionID", "Preparación Id") if c in tareas.columns),
         None,
     )
-    col_carro = next(
-        (c for c in ("ContenedorNumero", "ContenedorId", "ContenedorID") if c in tareas.columns),
-        None,
-    )
+    col_carro = "ContenedorNumero" if "ContenedorNumero" in tareas.columns else None
     col_estado = next(
         (c for c in ("TareaEstado", "EstadoTarea", "Estado") if c in tareas.columns),
+        None,
+    )
+    col_tipo = next(
+        (c for c in ("TareaTipo", "TipoTarea") if c in tareas.columns),
         None,
     )
 
@@ -128,61 +204,54 @@ def _resolver_carros(
         return carros, situacion
 
     t = tareas.copy()
-    t["_prep"] = _texto(t[col_prep])
+    t["_prep"] = _texto(t[col_prep]).str.replace(r"\.0$", "", regex=True)
     t["_carro"] = _texto(t[col_carro])
     t["_estado"] = _texto(t[col_estado]) if col_estado else ""
-    t = t[(t["_prep"] != "") & (t["_carro"] != "")].copy()
+
+    if col_tipo is not None:
+        t = t.loc[t[col_tipo].map(_tarea_es_preparacion)].copy()
+
+    es_carro = t["_carro"].str.upper().str.match(r"^CARRO\s*\d+", na=False)
+    no_controlada = ~t["_estado"].map(_estado_tarea_controlada)
+
+    t = t.loc[
+        t["_prep"].ne("")
+        & es_carro
+        & no_controlada
+    ].copy()
 
     if t.empty:
         return carros, situacion
 
-    t["_controlado"] = t["_estado"].map(_estado_tarea_controlada)
-
-    resumen = {}
-    for prep, grupo in t.groupby("_prep"):
-        # Un mismo carro puede tener varias tareas. Se considera controlado
-        # sólo cuando todas sus tareas están cerradas/controladas.
-        por_carro = (
-            grupo.groupby("_carro")["_controlado"]
-            .all()
-            .to_dict()
-        )
-        pendientes = [c for c, ctrl in por_carro.items() if not ctrl]
-        controlados = [c for c, ctrl in por_carro.items() if ctrl]
-
-        if pendientes and controlados:
-            estado = f"🟡 Parcial · {len(controlados)} controlado(s) / {len(pendientes)} pendiente(s)"
-        elif pendientes:
-            estado = f"🟠 Pendiente · {len(pendientes)} carro(s)"
-        elif controlados:
-            estado = "🟢 Controlado"
-        else:
-            estado = ""
-
-        resumen[prep] = {
-            "carros_pendientes": " | ".join(pendientes),
-            "situacion": estado,
-        }
+    resumen = (
+        t.groupby("_prep")["_carro"]
+        .agg(lambda s: " | ".join(dict.fromkeys(
+            valor for valor in s.tolist() if str(valor).strip()
+        )))
+        .to_dict()
+    )
 
     for idx, fila in pedidos.iterrows():
-        prep = str(fila.get("PreparacionID", "") or "").strip()
+        prep = re.sub(r"\.0$", "", str(fila.get("PreparacionID", "") or "").strip())
+
         if not prep or _pedido_cerrado(fila):
             continue
 
-        estado_prep = str(fila.get("EstadoPreparacion", "") or "").upper()
-        if any(x in estado_prep for x in ("FINALIZ", "COMPLET", "CONTROLAD", "CERRAD")):
-            # Ya no interesa el carro físico en la consulta comercial.
-            if prep in resumen and resumen[prep]["situacion"] == "🟢 Controlado":
-                situacion.at[idx] = "🟢 Controlado"
+        estado_prep = _normalizar_estado(
+            fila.get("EstadoPreparacion", "")
+        )
+
+        if any(
+            x in estado_prep
+            for x in ("FINALIZ", "COMPLET", "CONTROLAD", "CERRAD")
+        ):
             continue
 
-        info = resumen.get(prep)
-        if not info:
-            continue
-
-        # Mostrar solamente carros que todavía requieren control.
-        carros.at[idx] = info["carros_pendientes"]
-        situacion.at[idx] = info["situacion"]
+        carro = resumen.get(prep, "")
+        if carro:
+            carros.at[idx] = carro
+            cantidad = len([x for x in carro.split(" | ") if x])
+            situacion.at[idx] = f"🟠 Pendiente · {cantidad} carro(s)"
 
     return carros, situacion
 
@@ -265,6 +334,12 @@ def construir_tabla_consultas_cache(
     salida["FechaFinControl"] = pd.to_datetime(
         _serie(t, "FechaFinControl", pd.NaT), errors="coerce"
     )
+
+    fecha_fin_tareas = _resolver_fecha_fin_control(t, df_tareas)
+    salida["FechaFinControl"] = salida["FechaFinControl"].where(
+        salida["FechaFinControl"].notna(),
+        fecha_fin_tareas,
+    )
     salida["ClienteCodigo"] = _texto(_serie(t, "ClienteCodigo", ""))
     salida["CodigoLogistico"] = _texto(_serie(t, "CodigoLogistico", ""))
     salida["Cliente"] = _texto(_serie(t, "Cliente", ""))
@@ -289,71 +364,50 @@ def construir_tabla_consultas_cache(
     # ==========================================================
     # UNIVERSO OPERATIVO PARA CONSULTAS COMERCIALES
     # ==========================================================
-    # 1) Los pedidos eliminados no se muestran.
-    # 2) Los completos históricos sin fecha de creación ni transmisión
-    #    se consideran registros viejos ya resueltos y no se muestran.
-    # 3) Los completos con FechaFinControl se mantienen visibles sólo
-    #    durante los últimos 15 días desde el cierre real del control.
-    # 4) Un completo sin FechaFinControl pero con trazabilidad válida
-    #    se conserva para no ocultarlo por un faltante histórico.
+    # Activos: siempre visibles.
+    # Completos/finalizados: últimos 15 días.
     estado_norm = (
         salida["EstadoPedido"]
         .fillna("")
         .astype(str)
         .str.strip()
         .str.upper()
+        .str.replace("Ó", "O", regex=False)
     )
 
-    es_eliminado = estado_norm.eq("ELIMINADO")
+    es_eliminado = estado_norm.str.contains(
+        r"ELIMIN|ANULAD|CANCELAD",
+        regex=True,
+        na=False,
+    )
+
     es_completo = estado_norm.isin(
         {"COMPLETO", "COMPLETADO", "FINALIZADO", "FINAL", "CERRADO"}
     )
 
-    sin_fecha_creacion = salida["FechaCreacion"].isna()
-    sin_fecha_transmision = salida["FechaTransmisionERP"].isna()
-    # Si un pedido ya está Completo y no tiene FechaTransmisionERP,
-    # Comercial lo considera cerrado/resuelto: ya no figura activo en ERP
-    # y no debe permanecer en la bandeja operativa.
-    completo_sin_transmision = (
-        es_completo
-        & sin_fecha_transmision
-    )
-
-    completo_huerfano = (
-        es_completo
-        & sin_fecha_creacion
-        & sin_fecha_transmision
+    fecha_referencia_cierre = (
+        salida["FechaFinControl"]
+        .fillna(salida["FechaTransmisionERP"])
+        .fillna(salida["FechaCreacion"])
     )
 
     hoy = pd.Timestamp.now().normalize()
     corte_control = hoy - pd.Timedelta(days=DIAS_COMPLETOS_VISIBLES)
-    completo_control_antiguo = (
+
+    completo_reciente = (
         es_completo
-        & salida["FechaFinControl"].notna()
-        & (salida["FechaFinControl"] < corte_control)
+        & fecha_referencia_cierre.notna()
+        & (fecha_referencia_cierre >= corte_control)
     )
 
-    # Fallback para históricos donde no llegó FechaFinControl:
-    # un pedido completo no puede permanecer indefinidamente en Comercial.
-    # Si no tiene cierre de control, usamos FechaCreacion como referencia
-    # y lo mantenemos sólo durante la misma ventana de 15 días.
-    completo_sin_control_creacion_antigua = (
-        es_completo
-        & salida["FechaFinControl"].isna()
-        & salida["FechaCreacion"].notna()
-        & (salida["FechaCreacion"] < corte_control)
-    )
-
-    mantener = ~(
-        es_eliminado
-        | completo_sin_transmision
-        | completo_huerfano
-        | completo_control_antiguo
-        | completo_sin_control_creacion_antigua
+    mantener = (
+        ~es_eliminado
+        & ((~es_completo) | completo_reciente)
     )
 
     salida = salida.loc[mantener].copy()
     t = t.loc[salida.index].copy()
+
 
     estados = t.apply(_resolver_estado_comercial, axis=1)
     salida["CategoriaComercial"] = [x[0] for x in estados]
@@ -365,7 +419,8 @@ def construir_tabla_consultas_cache(
     t = t.reset_index(drop=True)
 
     carros, situacion_carros = _resolver_carros(t, df_tareas)
-    salida["Contenedor"] = carros
+    salida["Carro"] = carros
+    salida["Contenedor"] = salida["Carro"]
     salida["EstadoCarros"] = situacion_carros
 
     def _semaforo(fila):
