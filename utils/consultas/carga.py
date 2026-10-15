@@ -294,25 +294,56 @@ def _construir_pedidos_cloud(crudos: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def _preparar_tareas_cloud(tareas: pd.DataFrame) -> pd.DataFrame:
-    columnas_finales = ["PreparacionId", "ContenedorId", "ContenedorNumero", "TareaEstado"]
+    """Prepara Informe Tareas para la vista Comercial."""
+    columnas_finales = [
+        "PreparacionId",
+        "ContenedorId",
+        "ContenedorNumero",
+        "TareaEstado",
+        "TareaTipo",
+        "FechaHoraEstado",
+    ]
+
     if tareas is None or tareas.empty:
         return pd.DataFrame(columns=columnas_finales)
 
     salida = tareas.copy()
-    if "PreparacionId" not in salida.columns and "PreparacionID" in salida.columns:
-        salida = salida.rename(columns={"PreparacionID": "PreparacionId"})
-    if "ContenedorId" not in salida.columns and "ContenedorID" in salida.columns:
-        salida = salida.rename(columns={"ContenedorID": "ContenedorId"})
+    salida.columns = salida.columns.astype(str).str.strip()
 
-    for c in columnas_finales:
-        if c not in salida.columns:
-            salida[c] = ""
+    aliases = {
+        "PreparacionID": "PreparacionId",
+        "Preparación Id": "PreparacionId",
+        "ContenedorID": "ContenedorId",
+        "EstadoTarea": "TareaEstado",
+        "Estado": "TareaEstado",
+        "TipoTarea": "TareaTipo",
+        "FechaEstado": "FechaHoraEstado",
+    }
+
+    for origen, destino in aliases.items():
+        if destino not in salida.columns and origen in salida.columns:
+            salida = salida.rename(columns={origen: destino})
+
+    for columna in columnas_finales:
+        if columna not in salida.columns:
+            salida[columna] = ""
 
     salida = salida[columnas_finales].copy()
-    prep = _texto(salida["PreparacionId"])
-    cont_num = _texto(salida["ContenedorNumero"])
-    cont_id = _texto(salida["ContenedorId"])
-    salida = salida.loc[prep.ne("") & (cont_num.ne("") | cont_id.ne(""))].copy()
+    salida["PreparacionId"] = _texto(salida["PreparacionId"])
+    salida["ContenedorId"] = _texto(salida["ContenedorId"])
+    salida["ContenedorNumero"] = _texto(salida["ContenedorNumero"])
+    salida["TareaEstado"] = _texto(salida["TareaEstado"])
+    salida["TareaTipo"] = _texto(salida["TareaTipo"])
+    salida["FechaHoraEstado"] = pd.to_datetime(
+        salida["FechaHoraEstado"],
+        errors="coerce",
+        dayfirst=True,
+    )
+
+    salida = salida.loc[
+        salida["PreparacionId"].ne("")
+    ].copy()
+
     return salida.reset_index(drop=True)
 
 
@@ -331,7 +362,7 @@ def _cargar_maestros_cloud() -> dict[str, pd.DataFrame]:
     }
 
 
-@st.cache_data(ttl=45, max_entries=2, show_spinner="Cargando pedidos comerciales...")
+@st.cache_data(ttl=180, max_entries=2, show_spinner="Cargando pedidos comerciales...")
 def cargar_datos_consultas() -> dict[str, pd.DataFrame]:
     """Host/local -> PostgreSQL. Streamlit Cloud -> archivos versionados/GitHub."""
     if ES_STREAMLIT_CLOUD:
