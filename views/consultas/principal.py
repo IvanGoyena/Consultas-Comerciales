@@ -1878,6 +1878,17 @@ def render() -> None:
     ) -> None:
         pedido_detalle = str(pedido_detalle).strip()
 
+        cerrar_col_1, cerrar_col_2 = st.columns([5, 1])
+        with cerrar_col_2:
+            if st.button(
+                "✕ Cerrar",
+                key=f"cerrar_detalle_consultas_{pedido_detalle}",
+                width="stretch",
+            ):
+                st.session_state["consultas_detalle_abierto"] = False
+                st.session_state["consultas_pedido_detalle"] = ""
+                st.rerun()
+
         coincidencia = tabla_consultas[
             tabla_consultas["Pedido"]
             .astype(str)
@@ -2343,7 +2354,19 @@ def render() -> None:
                     key="btn_detalle_tabla_consultas",
                 )
             if abrir_detalle:
-                abrir_detalle_pedido(str(fila_sel["Pedido"]).strip())
+                st.session_state["consultas_pedido_detalle"] = str(
+                    fila_sel["Pedido"]
+                ).strip()
+                st.session_state["consultas_detalle_abierto"] = True
+                st.rerun()
+        if (
+            st.session_state.get("consultas_detalle_abierto", False)
+            and st.session_state.get("consultas_pedido_detalle", "")
+        ):
+            abrir_detalle_pedido(
+                st.session_state["consultas_pedido_detalle"]
+            )
+
         else:
             clientes = seleccionados["Cliente"].fillna("").astype(str).str.strip().nunique()
             unidades = int(pd.to_numeric(seleccionados["Unidades"], errors="coerce").fillna(0).sum())
