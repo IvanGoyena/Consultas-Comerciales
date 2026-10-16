@@ -28,6 +28,12 @@ else:
         asegurar_hoja,
     )
 
+    # En el host PostgreSQL es la fuente operativa, pero las respuestas
+    # también deben volver a Google Sheets para que Comercial las vea.
+    from utils.consultas.persistencia_google import (
+        actualizar_registro as actualizar_registro_google,
+    )
+
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -276,6 +282,35 @@ def obtener_registro_por_id(
     return coincidencias.iloc[0].to_dict()
 
 
+def _replicar_actualizacion_google(
+    nombre_hoja: str,
+    columna_id: str,
+    valor_id: Any,
+    cambios: dict[str, Any],
+) -> None:
+    """
+    En Streamlit Cloud la escritura primaria ya es Google Sheets.
+    En el host, después del UPDATE SQL, replica la misma modificación
+    en Google Sheets para cerrar el ida y vuelta con Comercial.
+    """
+    if ES_STREAMLIT_CLOUD:
+        return
+
+    try:
+        actualizar_registro_google(
+            nombre_hoja=nombre_hoja,
+            columna_id=columna_id,
+            valor_id=valor_id,
+            cambios=cambios,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "La actualización quedó guardada en PostgreSQL, "
+            "pero no se pudo replicar a Google Sheets. "
+            f"Detalle: {error}"
+        ) from error
+
+
 # ==========================================================
 # SOLICITUDES
 # ==========================================================
@@ -455,24 +490,35 @@ def actualizar_solicitud(
         estado_normalizado
     ]
 
+    cambios_solicitud = {
+        "EstadoSolicitud": estado_final,
+        "Responsable": limpiar_texto(
+            responsable
+        ),
+        "Respuesta": limpiar_texto(
+            respuesta
+        ),
+        "FechaResolucion": (
+            obtener_fecha_hora()
+            if estado_final == "Finalizada"
+            else ""
+        ),
+    }
+
+    # 1) Fuente operativa del host: PostgreSQL.
     actualizar_registro(
         nombre_hoja="Solicitudes",
         columna_id="SolicitudID",
         valor_id=solicitud_id,
-        cambios={
-            "EstadoSolicitud": estado_final,
-            "Responsable": limpiar_texto(
-                responsable
-            ),
-            "Respuesta": limpiar_texto(
-                respuesta
-            ),
-            "FechaResolucion": (
-                obtener_fecha_hora()
-                if estado_final == "Finalizada"
-                else ""
-            ),
-        },
+        cambios=cambios_solicitud,
+    )
+
+    # 2) Write-back inmediato para que Comercial vea la respuesta.
+    _replicar_actualizacion_google(
+        nombre_hoja="Solicitudes",
+        columna_id="SolicitudID",
+        valor_id=solicitud_id,
+        cambios=cambios_solicitud,
     )
 
     return {
@@ -958,20 +1004,55 @@ def actualizar_cancelacion_entrega(
     cancelacion_id: Any,
     cambios: dict[str, Any],
 ) -> dict[str, Any]:
-    """Actualiza una cancelación de entrega existente."""
+    """
+    Actualiza una cancelación de entrega.
+
+    Host:
+        PostgreSQL -> Google Sheets inmediatamente.
+    Cloud:
+        Google Sheets directamente.
+    """
 
     cancelacion_id_limpio = limpiar_texto(cancelacion_id)
     if not cancelacion_id_limpio:
         raise ValueError("El ID de cancelación es obligatorio.")
 
+    cambios_limpios = dict(cambios or {})
+    cambios_limpios["UltimaActualizacion"] = obtener_fecha_hora()
+
+    # 1) Escritura primaria:
+    #    - Cloud -> Google
+    #    - Host  -> PostgreSQL
     actualizar_registro(
         nombre_hoja="CancelacionesEntrega",
         columna_id="CancelacionEntregaID",
         valor_id=cancelacion_id_limpio,
-        cambios=cambios,
+        cambios=cambios_limpios,
     )
 
-    return {"ok": True, "id": cancelacion_id_limpio}
+    # 2) En host, replicar inmediatamente a Google Sheets para Comercial.
+    if not ES_STREAMLIT_CLOUD:
+        try:
+            actualizar_registro_google(
+                nombre_hoja="CancelacionesEntrega",
+                columna_id="CancelacionEntregaID",
+                valor_id=cancelacion_id_limpio,
+                cambios=cambios_limpios,
+            )
+        except Exception as error:
+            raise RuntimeError(
+                "La cancelación quedó actualizada en PostgreSQL, "
+                "pero no se pudo replicar a Google Sheets. "
+                f"Detalle: {error}"
+            ) from error
+
+    return {
+        "ok": True,
+        "id": cancelacion_id_limpio,
+        "estado": limpiar_texto(
+            cambios_limpios.get("EstadoCancelacion", "")
+        ),
+    }
 
 
 def marcar_whatsapp_cancelacion_enviado(
