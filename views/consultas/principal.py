@@ -33,6 +33,7 @@ from views.consultas.reclamos import (
 
 from utils.consultas.carga import (
     cargar_datos_consultas,
+    cargar_maestros_reclamos,
     limpiar_cache_datos_consultas,
 )
 from utils.consultas.cache_gestion import (
@@ -1561,7 +1562,23 @@ def render() -> None:
 
     with st.expander("➕ Cargar cancelación de entrega", expanded=False):
         st.warning("Gestión de SUPER PRIORIDAD. Registrala y enviá el aviso inmediatamente.")
-        opciones_clientes_cancelacion = construir_opciones_clientes_cancelacion(datos.get("clientes", pd.DataFrame()))
+
+        try:
+            maestros_cancelacion = cargar_maestros_reclamos()
+            clientes_cancelacion = maestros_cancelacion.get(
+                "clientes",
+                pd.DataFrame(),
+            )
+        except Exception:
+            clientes_cancelacion = pd.DataFrame()
+            logger.exception(
+                "No se pudo cargar Maestro Clientes para Cancelaciones de entrega."
+            )
+
+        opciones_clientes_cancelacion = construir_opciones_clientes_cancelacion(
+            clientes_cancelacion
+        )
+
         with st.form("form_cancelacion_entrega", clear_on_submit=True):
             c1,c2=st.columns(2)
             with c1:
