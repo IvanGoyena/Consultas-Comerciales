@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import pandas as pd
 from sqlalchemy import text as sql_text
 
+from database import engine
 
 
 # Contrato Python actual -> tablas PostgreSQL commercial.*.
@@ -85,9 +86,6 @@ ENTIDADES: dict[str, dict[str, Any]] = {
             "UsuarioSolicitante": "usuario_solicitante",
             "FechaSolicitud": "fecha_solicitud",
             "EstadoCancelacion": "estado_cancelacion",
-            "TelefonoDestino": "telefono_destino",
-            "EstadoWhatsApp": "estado_whatsapp",
-            "FechaEnvioWhatsApp": "fecha_envio_whatsapp",
             "ResponsableConfirmacion": "responsable_confirmacion",
             "FechaConfirmacion": "fecha_confirmacion",
             "ObservacionConfirmacion": "observacion_confirmacion",
@@ -160,15 +158,10 @@ _DATE_FIELDS = {"fecha_habilitacion", "fecha_requerida"}
 _TIMESTAMP_FIELDS = {
     "fecha_solicitud", "fecha_resolucion", "fecha_ejecucion_digip",
     "fecha_reclamo", "fecha_creacion", "fecha_cierre", "fecha_carga",
-    "fecha_envio_whatsapp", "fecha_confirmacion", "fecha_ir",
+    "fecha_confirmacion", "fecha_ir",
     "fecha_reingreso", "fecha_inicio_gestion", "ultima_actualizacion",
 }
 _BOOLEAN_FIELDS = {"bloqueo_activo"}
-
-
-def _obtener_engine():
-    from database import engine
-    return engine
 
 
 def _config(nombre_hoja: str) -> dict[str, Any]:
@@ -217,7 +210,7 @@ def _coerce(sql_col: str, valor: Any) -> Any:
 
 @contextmanager
 def transaccion() -> Iterator[Any]:
-    with _obtener_engine().begin() as conexion:
+    with engine.begin() as conexion:
         yield conexion
 
 
