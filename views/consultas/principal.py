@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -21,7 +20,6 @@ from utils.consultas.leer_gestion_consultas import (
 
 from utils.consultas.gestion_devoluciones import (
     guardar_cancelacion_entrega,
-    confirmar_envio_whatsapp,
 )
 from utils.consultas.leer_devoluciones import (
     estado_para_comercial,
@@ -519,9 +517,6 @@ def render() -> None:
     if "mostrar_historico_cancelaciones_entrega" not in st.session_state:
         st.session_state["mostrar_historico_cancelaciones_entrega"] = False
 
-    if "ultima_cancelacion_whatsapp" not in st.session_state:
-        st.session_state["ultima_cancelacion_whatsapp"] = None
-
 
     # ==========================================================
     # HISTÓRICOS ESPECÍFICOS DE LA INTERFAZ
@@ -650,38 +645,6 @@ def render() -> None:
         return ["Seleccionar cliente..."] + opciones
 
 
-    DESTINATARIOS_WHATSAPP = {
-        "Leo": "5491124714063",
-        "Juanma": "5491133914080",
-    }
-
-
-    def construir_mensaje_whatsapp_cancelacion(registro: dict) -> str:
-        """Construye el mensaje crítico para WhatsApp."""
-
-        remitos = str(registro.get("Remito", "") or "").split(" | ")
-        remitos = [remito.strip() for remito in remitos if remito.strip()]
-        detalle_remitos = "\n".join(f"• {remito}" for remito in remitos)
-        etiqueta_remitos = "Remitos" if len(remitos) > 1 else "Remito"
-
-        return (
-            "🚨 *CANCELACIÓN DE ENTREGA* 🚨\n\n"
-            f"*{etiqueta_remitos}:*\n{detalle_remitos}\n"
-            f"*Cliente:* {registro.get('Cliente', '') or 'Sin informar'}\n"
-            f"*Motivo:* {registro.get('Motivo', '')}\n"
-            f"*Observación:* {registro.get('Observacion', '') or 'Sin observaciones'}\n"
-            f"*Solicitado por:* {registro.get('UsuarioSolicitante', '')}\n"
-            f"*Fecha:* {registro.get('FechaSolicitud', '')}\n\n"
-            "⛔ *NO CARGAR NI DESPACHAR ESTA MERCADERÍA.*\n"
-            "Separar el remito y confirmar que la entrega fue detenida.\n\n"
-            f"ID de gestión: {registro.get('CancelacionEntregaID', '')}"
-        )
-
-
-    def construir_url_whatsapp_cancelacion(registro: dict, telefono: str) -> str:
-        mensaje = construir_mensaje_whatsapp_cancelacion(registro)
-        return f"https://wa.me/{telefono}?text={quote(mensaje)}"
-
 
     def mostrar_historial_cancelaciones_entrega(cancelaciones: pd.DataFrame) -> None:
         st.markdown("#### 📚 Histórico de cancelaciones de entrega")
@@ -715,12 +678,11 @@ def render() -> None:
 
         vista = tabla[[
             "CancelacionEntregaID", "Remito", "Cliente", "Motivo",
-            "EstadoCancelacion", "EstadoWhatsApp", "NumeroIR",
+            "EstadoCancelacion", "NumeroIR",
             "EstadoReingreso", "Fecha",
         ]].rename(columns={
             "CancelacionEntregaID": "ID",
             "EstadoCancelacion": "Estado",
-            "EstadoWhatsApp": "WhatsApp",
             "NumeroIR": "IR",
             "EstadoReingreso": "Reingreso",
         })
@@ -1537,8 +1499,8 @@ def render() -> None:
     with can_titulo:
         st.markdown("### 🚫 Cancelaciones de entrega")
         st.caption(
-            "Comercial registra y envía el aviso urgente. La resolución operativa "
-            "continúa en el módulo Devoluciones de Logística."
+            "Comercial registra la cancelación y queda disponible inmediatamente "
+            "para la gestión operativa de Logística."
         )
     with can_historial:
         if st.button(
@@ -1561,7 +1523,7 @@ def render() -> None:
         st.divider()
 
     with st.expander("➕ Cargar cancelación de entrega", expanded=False):
-        st.warning("Gestión de SUPER PRIORIDAD. Registrala y enviá el aviso inmediatamente.")
+        st.warning("Gestión de SUPER PRIORIDAD. Al registrarla queda disponible inmediatamente para Logística.")
 
         try:
             maestros_cancelacion = cargar_maestros_reclamos()
@@ -1587,82 +1549,38 @@ def render() -> None:
             with c2:
                 motivo_cancelacion=st.selectbox("Motivo *",options=["Devolución del cliente","Error de carga del vendedor","Pedido duplicado","Error de carga de productos","Otros"])
                 observacion_cancelacion=st.text_area("Observación")
-            st.caption(
-                "La alerta se preparará para **Leo y Juanma**. "
-                "Después de registrar la cancelación aparecerán dos botones de WhatsApp."
-            )
             cargar_cancelacion=st.form_submit_button(
-                "🚨 Registrar y preparar WhatsApp",
+                "🚨 Registrar cancelación",
                 type="primary",
                 width="stretch",
             )
         if cargar_cancelacion:
-            usuario_cancelacion=st.session_state.get("usuario") or st.session_state.get("nombre_usuario") or "Usuario app"
-            if cliente_cancelacion=="Seleccionar cliente...":
+            usuario_cancelacion = (
+                st.session_state.get("usuario")
+                or st.session_state.get("nombre_usuario")
+                or "Usuario app"
+            )
+            if cliente_cancelacion == "Seleccionar cliente...":
                 st.error("Seleccioná un cliente.")
             else:
                 try:
-                    telefonos_destino = " | ".join(DESTINATARIOS_WHATSAPP.values())
-                    resultado=guardar_cancelacion_entrega(
+                    resultado = guardar_cancelacion_entrega(
                         remito_cancelacion,
                         cliente_cancelacion,
                         motivo_cancelacion,
                         observacion_cancelacion,
                         usuario_cancelacion,
-                        telefonos_destino,
                     )
                     if resultado.get("duplicado"):
                         st.warning(resultado["mensaje"])
                     else:
-                        urls_whatsapp = {
-                            nombre: construir_url_whatsapp_cancelacion(
-                                resultado["registro"], telefono
-                            )
-                            for nombre, telefono in DESTINATARIOS_WHATSAPP.items()
-                        }
-                        st.session_state["ultima_cancelacion_whatsapp"] = {
-                            "id": resultado["id"],
-                            "urls": urls_whatsapp,
-                            "registro": resultado["registro"],
-                        }
                         invalidar_cache_gestion()
                         st.success(
-                            "Cancelación registrada. Enviá la alerta a Leo y a Juanma."
+                            "Cancelación registrada y derivada automáticamente a Logística."
                         )
+                        st.rerun()
                 except Exception as error:
                     st.error(f"No se pudo registrar: {error}")
-
-    ultima=st.session_state.get("ultima_cancelacion_whatsapp")
-    if ultima:
-        st.error("🚨 Aviso pendiente de envío a Leo y Juanma.")
-        urls_whatsapp = ultima.get("urls", {})
-        w1,w2,w3=st.columns([1.4,1.4,1.1])
-        with w1:
-            st.link_button(
-                "📲 Enviar a Leo",
-                urls_whatsapp.get("Leo", "#"),
-                type="primary",
-                width="stretch",
-            )
-        with w2:
-            st.link_button(
-                "📲 Enviar a Juanma",
-                urls_whatsapp.get("Juanma", "#"),
-                type="primary",
-                width="stretch",
-            )
-        with w3:
-            if st.button(
-                "✅ Confirmar ambos",
-                width="stretch",
-                key="btn_confirmar_whatsapp_enviado",
-            ):
-                usuario=st.session_state.get("usuario") or st.session_state.get("nombre_usuario") or "Usuario app"
-                confirmar_envio_whatsapp(ultima["id"],usuario)
-                st.session_state["ultima_cancelacion_whatsapp"]=None
-                invalidar_cache_gestion()
-                st.success("Avisos enviados y gestión derivada a Logística.")
-                st.rerun()
 
     if cancelaciones_activas.empty:
         st.info("No hay cancelaciones abiertas.")
