@@ -6,7 +6,6 @@ import streamlit as st
 COLUMNAS_CANCELACIONES_ENTREGA = [
     "CancelacionEntregaID", "Remito", "Cliente", "Motivo", "Observacion",
     "UsuarioSolicitante", "FechaSolicitud", "EstadoCancelacion",
-    "TelefonoDestino", "EstadoWhatsApp", "FechaEnvioWhatsApp",
     "ResponsableConfirmacion", "FechaConfirmacion", "ObservacionConfirmacion",
     "NumeroIR", "FechaIR", "EstadoReingreso", "FechaReingreso", "FechaCierre",
     "ResponsableGestion", "FechaInicioGestion", "ResultadoOperativo",
@@ -97,9 +96,11 @@ def estado_para_comercial(estado: str) -> str:
     estado = str(estado or "").strip()
 
     mapa = {
-        "Pendiente de envío": "Pendiente de aviso",
-        "Alerta enviada": "Enviada a Logística",
-        "Enviada a Logística": "Enviada a Logística",
+        "Pendiente de gestión": "Pendiente de gestión",
+        # Compatibilidad con gestiones históricas previas al retiro de WhatsApp.
+        "Pendiente de envío": "Pendiente de gestión",
+        "Alerta enviada": "Pendiente de gestión",
+        "Enviada a Logística": "Pendiente de gestión",
         "En gestión": "En gestión",
         "Entrega detenida": "En gestión",
         "IR generado": "En gestión",
